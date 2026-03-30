@@ -1,0 +1,31 @@
+environment: local
+
+model :
+  student:
+    name: gpt2
+    device: cuda
+    precision: fp32
+
+training:
+  method: lora
+  lora :
+    r: 8
+    alpha: 16
+    target_modules: ["c_attn", "c_proj"]
+  learning_rate: 5e-4
+  batch_size: 2
+  max_seq_length: 512
+  epochs: 20
+
+data:
+  train_dataset : openai/gsm8k
+  train_samples: 50
+  eval_dataset : openai/gsm8k
+  eval_samples: 20
+
+eval:
+  method : code_execution
+
+logging:
+  backend: tensorboard
+  log_dir: runs/
