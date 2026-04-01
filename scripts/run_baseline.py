@@ -11,9 +11,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import torch
 import yaml
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from datasets import load_from_disk
-
 # Phase 1 code
+from src.data.normalize import build_clean_dataset
 from src.eval.extract_answer import extract_answer, is_correct
 from src.eval.metrics import compute_accuracy, accuracy_by_steps, save_results
 
@@ -29,12 +28,10 @@ def load_config(config_path):
 
 def load_test_dataset(config) :
     """
-    Load the test dataset from disk.
+    Load and normalize the test dataset.
     """
-    # Load from disk 
-    test = load_from_disk(config["data"]["eval_path"])
-    if config["data"]["eval_samples"] > 0:
-        test = test.select(range(config["data"]["eval_samples"]))
+    n = config["data"]["eval_samples"] if config["data"]["eval_samples"] > 0 else -1
+    test = build_clean_dataset("gsm8k", "test", n_samples=n)
     return test
 
 def load_model_and_tokenizer(config) : 
