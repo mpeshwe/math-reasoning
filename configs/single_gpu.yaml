@@ -1,10 +1,10 @@
-environment: local
+environment: vast_single
 
 model :
   student:
-    name: gpt2
+    name: meta-llama/Llama-3.2-3B-Instruct
     device: cuda
-    precision: fp32
+    precision: fp16
 
 training:
   method: lora
@@ -13,16 +13,16 @@ training:
     alpha: 16
     target_modules: ["c_attn", "c_proj"]
   learning_rate: 5e-4
-  batch_size: 2
+  batch_size: 8
   max_seq_length: 512
   epochs: 20
 
 data:
   train_dataset : openai/gsm8k
-  train_samples: 50
+  train_samples: -1
   eval_dataset : openai/gsm8k
   eval_path: data/processed/gsm8k_test
-  eval_samples: 20
+  eval_samples: 50
 
 eval:
   method : code_execution
@@ -30,7 +30,7 @@ eval:
 prompt_template: "Question: {question} \n Answer: Let me solve this step by step"
 
 generation : 
-  max_new_tokens: 256
+  max_new_tokens: 512
   temperature: 0.0
   do_sample: false 
 
