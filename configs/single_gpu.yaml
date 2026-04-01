@@ -29,8 +29,11 @@ eval:
 
 prompt_template: "Question: {question} \n Answer: Let me solve this step by step"
 
-generation : 
-  max_new_tokens: 512
+inference:
+  server_url: http://localhost:8000
+
+generation :
+  max_new_tokens: 256
   temperature: 0.0
   do_sample: false 
 
