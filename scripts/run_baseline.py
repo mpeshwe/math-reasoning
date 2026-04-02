@@ -8,8 +8,9 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # third-party
-import requests
+import torch
 import yaml
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Phase 1 code
 from src.data.normalize import build_clean_dataset
@@ -31,41 +32,82 @@ def load_test_dataset(config):
     return test
 
 
-def generate_solutions(dataset, config):
-    """Generate model outputs via vLLM server and evaluate correctness."""
+def load_model_and_tokenizer(config):
+    """Load model and tokenizer from config."""
+    model_name = config["model"]["student"]["name"]
+    device = config["model"]["student"]["device"]
+    precision = config["model"]["student"]["precision"]
+
+    if device == "cuda" and not torch.cuda.is_available():
+        print("[run_baseline] load_model_and_tokenizer: CUDA not available, falling back to CPU")
+        device = "cpu"
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model = AutoModelForCausalLM.from_pretrained(model_name)
+
+    if precision == "fp16":
+        model.half()
+    elif precision == "bf16":
+        model.bfloat16()
+
+    model.to(device)
+    model.eval()
+
+    return model, tokenizer, device
+
+
+def generate_solutions(model, tokenizer, dataset, config, device):
+    """Generate model outputs in batches and evaluate correctness."""
     results = []
     prompt_template = config["prompt_template"]
-    server_url = config["inference"]["server_url"]
-    model_name = config["model"]["student"]["name"]
+    batch_size = config.get("inference", {}).get("batch_size", 8)
 
-    for i, example in enumerate(dataset):
-        prompt = prompt_template.format(question=example["question"])
+    # Build all prompts
+    prompts = [prompt_template.format(question=ex["question"]) for ex in dataset]
 
-        response = requests.post(f"{server_url}/v1/completions", json={
-            "model": model_name,
-            "prompt": prompt,
-            "max_tokens": config["generation"]["max_new_tokens"],
-            "temperature": config["generation"]["temperature"],
-        })
-        response.raise_for_status()
-        model_output = response.json()["choices"][0]["text"]
+    for start in range(0, len(prompts), batch_size):
+        end = min(start + batch_size, len(prompts))
+        batch_prompts = prompts[start:end]
+        batch_examples = [dataset[i] for i in range(start, end)]
 
-        # Evaluate using Phase 1 code
-        extracted = extract_answer(model_output)
-        ground_truth = example["final_answer"]
-        correct = is_correct(extracted, ground_truth)
+        # Tokenize batch
+        inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True, truncation=True).to(device)
+        input_length = inputs["input_ids"].shape[1]
 
-        results.append({
-            "id": example["id"],
-            "question": example["question"],
-            "ground_truth": ground_truth,
-            "num_steps": example["num_steps"],
-            "model_output": model_output,
-            "extracted_answer": extracted,
-            "is_correct": correct,
-        })
+        # Generate
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=config["generation"]["max_new_tokens"],
+                do_sample=config["generation"]["do_sample"],
+                pad_token_id=tokenizer.pad_token_id,
+            )
 
-        print(f"[run_baseline] generate_solutions: [{i+1}/{len(dataset)}] correct={correct} extracted={extracted} truth={ground_truth}")
+        # Decode each example in batch
+        for j, example in enumerate(batch_examples):
+            new_tokens = outputs[j, input_length:]
+            model_output = tokenizer.decode(new_tokens, skip_special_tokens=True)
+
+            extracted = extract_answer(model_output)
+            ground_truth = example["final_answer"]
+            correct = is_correct(extracted, ground_truth)
+
+            results.append({
+                "id": example["id"],
+                "question": example["question"],
+                "ground_truth": ground_truth,
+                "num_steps": example["num_steps"],
+                "model_output": model_output,
+                "extracted_answer": extracted,
+                "is_correct": correct,
+            })
+
+            idx = start + j + 1
+            print(f"[run_baseline] generate_solutions: [{idx}/{len(dataset)}] correct={correct} extracted={extracted} truth={ground_truth}")
 
     return results
 
@@ -77,10 +119,11 @@ def main():
 
     config = load_config(args.config)
     dataset = load_test_dataset(config)
+    model, tokenizer, device = load_model_and_tokenizer(config)
 
-    print(f"[run_baseline] main: Loaded {len(dataset)} problems")
+    print(f"[run_baseline] main: Loaded {len(dataset)} problems, model on {device}")
 
-    results = generate_solutions(dataset, config)
+    results = generate_solutions(model, tokenizer, dataset, config, device)
 
     # Compute metrics
     accuracy = compute_accuracy(results)

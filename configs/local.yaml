@@ -28,7 +28,7 @@ eval:
   method : code_execution
 
 inference:
-  server_url: http://localhost:8000
+  batch_size: 4
 
 prompt_template: "Question: {question} \n Answer: Let me solve this step by step"
 
